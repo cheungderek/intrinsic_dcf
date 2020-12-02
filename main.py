@@ -14,7 +14,7 @@ tax_rate = 0.3
 '''---------- // Hard-coded variables above // ----------'''
 
 '''----- // I. Financial Information from Yahoo Finance // -----'''
-income_statement_url = '<https://finance.yahoo.com/quote/>' + company_ticker + '/financials?p=' + company_ticker
+income_statement_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/financials?p=' + company_ticker
 
 income_statement_html = requests.get(income_statement_url)
 income_statement_soup = bs(income_statement_html.text, 'html.parser')
@@ -122,7 +122,7 @@ market_variance_float = variance_df.iloc[1]
 equity_beta = covariance_float/market_variance_float
 equity_return = risk_free_rate_float+equity_beta*(market_risk_premium)
 
-balance_sheet_url = '<https://finance.yahoo.com/quote/>' + company_ticker + '/balance-sheet?p=' + company_ticker
+balance_sheet_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/balance-sheet?p=' + company_ticker
 
 balance_sheet_html = requests.get(balance_sheet_url)
 balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
@@ -138,7 +138,7 @@ for value in net_debt_row.find_all('div'):
     net_debt_lst.append(value)
 net_debt_int = int(net_debt_lst[3])
 
-market_cap_url = '<https://finance.yahoo.com/quote/>' + company_ticker + '?p=' + company_ticker
+market_cap_url = 'https://finance.yahoo.com/quote/' + company_ticker + '?p=' + company_ticker
 market_cap_html = requests.get(market_cap_url)
 market_cap_soup = bs(market_cap_html.text, 'html.parser')
 
