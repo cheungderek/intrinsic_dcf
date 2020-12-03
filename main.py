@@ -5,7 +5,7 @@ import pandas_datareader as dr
 import datetime
 
 '''---------- // Hard-coded variables below // ----------'''
-company_ticker = 'AAPL'
+company_ticker = 'MSFT'
 timespan = 100 #timespan for the equity beta calculation
 market_risk_premium = 0.0523
 long_term_growth = 0.01
@@ -130,13 +130,21 @@ balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
 balance_sheet_table = balance_sheet_soup.find('div', class_='D(tbrg)')
 
 net_debt_lst = []
-
 net_debt_row = balance_sheet_table.find('div', attrs={'title':'Net Debt'}).parent.parent
 for value in net_debt_row.find_all('div'):
     value = value.text
     value = value.replace(',','')
     net_debt_lst.append(value)
 net_debt_int = int(net_debt_lst[3])
+
+# Derek - 2 Dec 2020 - Find the latest Share Issued in order to calculate the intrinsic value of each stock
+shared_issued_lst = []
+shared_issued_row = balance_sheet_table.find('div', attrs={'title':'Share Issued'}).parent.parent
+for value in shared_issued_row.find_all('div'):
+    value = value.text
+    value = value.replace(',','')
+    shared_issued_lst.append(value)
+shared_issued_int = int(shared_issued_lst[3])
 
 market_cap_url = 'https://finance.yahoo.com/quote/' + company_ticker + '?p=' + company_ticker
 market_cap_html = requests.get(market_cap_url)
@@ -175,18 +183,6 @@ PV_terminal_value = int(terminal_value/(1+WACC)**5)
 
 enterprise_value = sum(discounted_EBIT_lst)+PV_terminal_value
 equity_value = enterprise_value-net_debt_int
+intrinsic_value = equity_value / shared_issued_int
+print('\n\n\nIntrinsic value of each share of', company_ticker, 'on', current_date, '=', "{0:0.1f}".format(intrinsic_value), '\n\n\n')
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
-
-
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
