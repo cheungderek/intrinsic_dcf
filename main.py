@@ -3,12 +3,13 @@ import pandas as pd
 import requests
 import pandas_datareader as dr
 import datetime
+import openpyxl
 
 '''---------- // Hard-coded variables below // ----------'''
 company_ticker = 'MSFT'
 timespan = 100 #timespan for the equity beta calculation
-market_risk_premium = 0.0523
-long_term_growth = 0.01
+market_risk_premium = 0.0523        # required return rate
+long_term_growth = 0.01             # perpetual rate of return
 debt_return = 0.01
 tax_rate = 0.3
 '''---------- // Hard-coded variables above // ----------'''
@@ -29,6 +30,12 @@ header_lst = header_lst[::-1]
 del header_lst[len(header_lst)-1]
 header_lst.insert(0,'Breakdown')
 income_statement_df = pd.DataFrame(columns = header_lst)
+
+# Derek - 2 Dec 2020 - write to a spreadsheet
+spreadsheet = company_ticker + '.xlsx'
+writer = pd.ExcelWriter(spreadsheet)
+income_statement_df.to_excel(writer, 'Income Statement')
+
 
 revenue_row = income_statement_table.find('div', class_='D(tbr) fi-row Bgc($hoverBgColor):h')
 revenue_lst = []
@@ -98,6 +105,7 @@ price_information_df['Market Prices'] = market_price_df['Adj Close']
 
 returns_information_df = pd.DataFrame(columns =['Stock Returns', 'Market Returns'])
 
+
 stock_return_lst = []
 for i in range(1,len(price_information_df)):
     open_price = price_information_df.iloc[i-1,0]
@@ -105,6 +113,11 @@ for i in range(1,len(price_information_df)):
     stock_return = (close_price-open_price)/open_price
     stock_return_lst.append(stock_return)
 returns_information_df['Stock Returns'] = stock_return_lst
+
+
+# Derek - 2 Dec 2020 - write to spreadsheet
+returns_information_df.to_excel(writer, 'Stock Returns')
+writer.save()
 
 market_return_lst = []
 for i in range(1,len(price_information_df)):
