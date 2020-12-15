@@ -3,6 +3,7 @@
 # http://theautomatic.net/yahoo_fin-documentation/
 # https://www.mattbutton.com/2019/01/24/how-to-scrape-yahoo-finance-and-extract-fundamental-stock-market-data-using-python-lxml-and-pandas/?fbclid=IwAR3971b38GYY7ERRLHB388ywzsGlEtd4heXj0191yJDgwdlHQFaKqwF99vI
 # https://algotrading101.com/learn/yfinance-guide/
+# https://medium.com/technofunnel/web-scraping-with-python-using-beautifulsoup-76b710e3e92f
 
 ''' --- Steps --- '''
 ''' 
@@ -14,6 +15,9 @@ This is the net PV of the company and the intrinsic value of each share of the c
 of the company with the number of shares outstanding
 
 FCF = EBIT - capital expenditure. The program assumes matured companies have less captial expenditure and thus FCF = EBIT.
+
+Yahoo financial also publishes FCF for it can be misleading for companies such as Banks and FCF for banks show the cash
+of the banks including deposit!
 
 To calculate future FCFs or EBITs, we will assume that the average revenue growth rate and the average EBIT margin of 
 the company in the past three years will continue to apply for the next five years. Therefore, for a given future 
@@ -51,6 +55,7 @@ import pandas as pd
 import requests
 import pandas_datareader as dr
 import datetime
+import numpy as np
 import lxml
 from lxml import html
 from columnar import columnar
@@ -58,7 +63,7 @@ import openpyxl
 
 '''---------- // Hard-coded variables below // ----------'''
 #company_ticker = '0700.HK'
-company_ticker = 'MSFT'
+company_ticker = 'TD.TO'
 timespan = 100 #timespan for the equity beta calculation
 market_risk_premium = 0.0523        # required return rate
 long_term_growth = 0.01             # perpetual rate of return. Should be less than 2.5%
@@ -118,7 +123,8 @@ try:
 except Exception as err:
     # some companies' Income Statement in Yahoo Finance such as TD, 0700.HK do not have EBIT. Use substitution:
     #   EBIT = Pretax Income + Interest Expense Non Operating
-    # ToDo - find the Interest Expense Non Operating and add back to the PreTax Income
+    # ToDo - find the "Interest Expense Non Operating" and add back to the PreTax Income
+    #temp_income_statement_soup = bs(income_statement_html.text, 'html5LIB')
     EBIT_row = income_statement_table.find('div', attrs={'title': 'Pretax Income'}).parent.parent
 
 EBIT_lst = []
@@ -151,6 +157,7 @@ for year in range(1,len(income_statement_df.columns)):
     EBIT_margin = income_statement_df.iloc[1,year]/income_statement_df.iloc[0,year]
     EBIT_margin_lst.append(EBIT_margin)
 avg_EBIT_margin = sum(EBIT_margin_lst)/len(EBIT_margin_lst)
+# avg_EBIT_margin is used to calculate the future FCF or EBIT for a given forecasted revenue in future year
 print('Average EBIT Margin - avg_EBIT_margin \n', avg_EBIT_margin)
 
 forecast_df = pd.DataFrame(columns=['Year ' + str(i) for i in range(1,7)])
@@ -230,10 +237,7 @@ equity_return = risk_free_rate_float+equity_beta*(market_risk_premium)
 balance_sheet_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/balance-sheet?p=' + company_ticker
 
 balance_sheet_html = requests.get(balance_sheet_url)
-#balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
-# use html5lib parser because Cash and Cash Equivants are under "button" and cannot be scrapped by html.parser
-# pip install html5lib
-balance_sheet_soup = bs(balance_sheet_html.text, 'html5lib')
+balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
 
 balance_sheet_table = balance_sheet_soup.find('div', class_='D(tbrg)')
 
@@ -247,12 +251,6 @@ try:
         net_debt_lst.append(value)
     net_debt_int = int(net_debt_lst[3])
 except Exception as err:
-    # Derek - try to catch balance sheet that does not contain Net Debt
-    # net debt = total debt - cash-like assets on the balance sheet
-    tree = html.fromstring(balance_sheet_html.content)
-    tree.xpath("//h1/text()")
-    print(tree.xpath("//h1/text()"))
-
     total_debt_lst = []
     cash_equiv_lst = []
     total_debt_row = balance_sheet_table.find('div', attrs={'title':'Total Debt'}).parent.parent
@@ -260,23 +258,45 @@ except Exception as err:
         total_debt_value = total_debt_value.text
         total_debt_value = total_debt_value.replace(',', '')
         total_debt_lst.append(total_debt_value)
-     # find the cash and cash equivalents
-#    cash_equiv_row = balance_sheet_table.find_all('div', {"class":"DP(0) M(0) Va(m) Bd(0) Fz(s) Mend(2px) tgglBtn"}).parent.parent.parent
-    data = []
+    # find the cash and cash equivalents
+    # cash_equiv_row = balance_sheet_table.find_all('div', {"class":"DP(0) M(0) Va(m) Bd(0) Fz(s) Mend(2px) tgglBtn"}).parent.parent.parent
+    # Derek - try to catch balance sheet that does not contain "Net Debt"
+    # Net Debt = Total Debt - Cash-like assets on the balance sheet
+    # use html5lib parser because Cash and Cash Equivants are under "button" and cannot be scrapped by html.parser
+    # pip install html5lib
+    page = requests.get(balance_sheet_url)
+    tree = html.fromstring(page.content)
+    table_rows = tree.xpath("//div[contains(@class, 'D(tbr)')]")
+
+    # Ensure that some table rows are found; if none are found, then it's possible
+    # that Yahoo Finance has changed their page layout, or have detected
+    # that you're scraping the page.
+    assert len(table_rows) > 0
+    parsed_rows = []
+    for table_row in table_rows:
+        parsed_row = []
+        el = table_row.xpath("./div")
+        none_count = 0
+        for rs in el:
+            try:
+                (text,) = rs.xpath('.//span/text()[1]')
+                parsed_row.append(text)
+            except ValueError:
+                parsed_row.append(np.NaN)
+                none_count += 1
+        if (none_count < 4):
+            parsed_rows.append(parsed_row)
+    df = pd.DataFrame(parsed_rows)
+
+
     r = requests.get(balance_sheet_url)
-    soup = bs(r.text, 'html_parser')
+    temp_balance_sheet_soup = bs(r.content, 'html5lib')
+    temp = temp_balance_sheet_soup.prettify()
+    # cash = temp_balance_sheet_soup.find("meta", {"annualCashCashEquivalentsAndFederalFundsSold":"reportedValue"})
+    cash_equiv_row = temp_balance_sheet_soup.find('script', attrs = {'annualCashCashEquivalentsAndFederalFundsSold':'reportValue'})
 
-    table = soup.find_all('table')  # finds all tables
-    table_top = pd.read_html(str(table))[0]  # the top table
-    try:  # try to get the other table if exists
-        table_extra = pd.read_html(str(table))[7]
-    except:
-        table_extra = pd.DataFrame()
-    result = pd.concat([table_top, table_extra])
-    data.append(result)
-
-    cash_equiv_row = balance_sheet_table.find('div', attrs={'title':'Cash And Cash Equivalents'}).parent.parent
-    for cash_equiv_value in cash_equiv_row.find_all('div'):
+    #cash_equiv_row = balance_sheet_table.find('div', attrs={'title':'Cash And Cash Equivalents'}).parent.parent
+    for cash_equiv_value in cash_equiv_row.find_all('reportValue'):
         cash_equiv_value = cash_equiv_value.text
         cash_equiv_value = cash_equiv_value.replace(',', '')
         cash_equiv_lst.append(cash_equiv_value)
