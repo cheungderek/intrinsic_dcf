@@ -55,6 +55,7 @@ import pandas as pd
 import requests
 import pandas_datareader as dr
 import datetime
+from selenium import webdriver
 import numpy as np
 import lxml
 from lxml import html
@@ -239,7 +240,24 @@ balance_sheet_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/bala
 balance_sheet_html = requests.get(balance_sheet_url)
 balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
 
+''' balance_sheet_soup contains the following hidden data for TD.TO
+"annualCashCashEquivalentsAndFederalFundsSold":[
+{"dataId":23032,"asOfDate":"2017-10-31","periodType":"12M","currencyCode":"CAD","reportedValue":{"raw":189585000000,"fmt":"189.59B"}},
+{"dataId":23032,"asOfDate":"2018-10-31","periodType":"12M","currencyCode":"CAD","reportedValue":{"raw":162834000000,"fmt":"162.83B"}},
+{"dataId":23032,"asOfDate":"2019-10-31","periodType":"12M","currencyCode":"CAD","reportedValue":{"raw":196381000000,"fmt":"196.38B"}},
+{"dataId":23032,"asOfDate":"2020-10-31","periodType":"12M","currencyCode":"CAD","reportedValue":{"raw":339756000000,"fmt":"339.76B"}}],
+'''
+#driver = webdriver.Chrome()
+#tmp_page = driver.get(balance_sheet_url)
+#button = driver.find_element_by_id('buttonID')
+#button.click()
+
+
+cash_equiv_table = balance_sheet_soup.find_all('div', attrs={'title':'Cash, Cash Equivalents & Federal Funds Sold'})
+
+
 balance_sheet_table = balance_sheet_soup.find('div', class_='D(tbrg)')
+
 
 # Derek - net debt
 net_debt_lst = []
@@ -251,8 +269,32 @@ try:
         net_debt_lst.append(value)
     net_debt_int = int(net_debt_lst[3])
 except Exception as err:
+    # The stock does not have Net Debt. Use the following formula:
+    #   Net_Debt = Total Debt - Cash-like Assets in the Balance Sheet
     total_debt_lst = []
     cash_equiv_lst = []
+
+
+    # find out the share issued in each reported years
+    share_issued_lst = []
+    share_issued_row = balance_sheet_table.find('div', attrs={'title':'Share Issued'}).parent.parent
+    for share_issued_value in share_issued_row.find_all('div'):
+        share_issued_value = share_issued_value.text
+        share_issued_value = share_issued_value.replace(',', '')
+        share_issued_lst.append(share_issued_value)
+
+    # find out the share issued in each reported years
+    bs_soup = bs(balance_sheet_html.text, 'html5lib')
+    bs_table = bs_soup.find('div', class_='D(tbrg)')
+
+    total_assets_lst = []
+    total_assets_row = balance_sheet_table.find('div', attrs={'title': 'Total Assets'}).parent.parent
+    for total_assets_value in total_assets_row.find_all('div'):
+        total_assets_value = total_assets_value.text
+        total_assets_value = total_assets_value.replace(',', '')
+        total_assets_lst.append(total_assets_value)
+
+
     total_debt_row = balance_sheet_table.find('div', attrs={'title':'Total Debt'}).parent.parent
     for total_debt_value in total_debt_row.find_all('div'):
         total_debt_value = total_debt_value.text
@@ -264,10 +306,33 @@ except Exception as err:
     # Net Debt = Total Debt - Cash-like assets on the balance sheet
     # use html5lib parser because Cash and Cash Equivants are under "button" and cannot be scrapped by html.parser
     # pip install html5lib
+    temp_balance_sheet_soup = bs(r.content, 'html5lib')
+    temp = temp_balance_sheet_soup.prettify()
+    # cash = temp_balance_sheet_soup.find("meta", {"annualCashCashEquivalentsAndFederalFundsSold":"reportedValue"})
+    cash_equiv_row = temp_balance_sheet_soup.find('script', attrs = {'annualCashCashEquivalentsAndFederalFundsSold':'reportValue'})
+
+    #cash_equiv_row = balance_sheet_table.find('div', attrs={'title':'Cash And Cash Equivalents'}).parent.parent
+    for cash_equiv_value in cash_equiv_row.find_all('reportValue'):
+        cash_equiv_value = cash_equiv_value.text
+        cash_equiv_value = cash_equiv_value.replace(',', '')
+        cash_equiv_lst.append(cash_equiv_value)
+    for value in total_debt_row.find_all('div'):
+        net_debt_lst.append(value - cash_equiv_value)
+
+''' Temp code to use Rapid API 
     page = requests.get(balance_sheet_url)
     tree = html.fromstring(page.content)
     table_rows = tree.xpath("//div[contains(@class, 'D(tbr)')]")
-
+    url = "https://yahoo-finance-low-latency.p.rapidapi.com/v11/finance/quoteSummary/TD"
+    querystring = {"modules": "balanceSheetHistory", "region": "CA", "lang": "en"}
+    headers = {
+        'x-rapidapi-key': "3ff95d5714msh074b996ea8f3306p1bfd38jsn281fe268484b",
+        'x-rapidapi-host': "yahoo-finance-low-latency.p.rapidapi.com"
+    }
+    response = requests.request("GET", url, headers=headers, params=querystring)
+    print(response.text)
+'''
+''' use xtree but still cannot get Cast Equivalent 
     # Ensure that some table rows are found; if none are found, then it's possible
     # that Yahoo Finance has changed their page layout, or have detected
     # that you're scraping the page.
@@ -287,21 +352,9 @@ except Exception as err:
         if (none_count < 4):
             parsed_rows.append(parsed_row)
     df = pd.DataFrame(parsed_rows)
+'''
+    # r = requests.get(balance_sheet_url)
 
-
-    r = requests.get(balance_sheet_url)
-    temp_balance_sheet_soup = bs(r.content, 'html5lib')
-    temp = temp_balance_sheet_soup.prettify()
-    # cash = temp_balance_sheet_soup.find("meta", {"annualCashCashEquivalentsAndFederalFundsSold":"reportedValue"})
-    cash_equiv_row = temp_balance_sheet_soup.find('script', attrs = {'annualCashCashEquivalentsAndFederalFundsSold':'reportValue'})
-
-    #cash_equiv_row = balance_sheet_table.find('div', attrs={'title':'Cash And Cash Equivalents'}).parent.parent
-    for cash_equiv_value in cash_equiv_row.find_all('reportValue'):
-        cash_equiv_value = cash_equiv_value.text
-        cash_equiv_value = cash_equiv_value.replace(',', '')
-        cash_equiv_lst.append(cash_equiv_value)
-    for value in total_debt_row.find_all('div'):
-        net_debt_lst.append(value - cash_equiv_value)
 '''
     table_rows = tree.xpath("//div[contains(@class, 'D(tbr)')]")
     assert len(table_rows) > 0
