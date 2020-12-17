@@ -253,8 +253,8 @@ balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
 #button.click()
 
 
-cash_equiv_table = balance_sheet_soup.find_all('div', attrs={'title':'Cash, Cash Equivalents & Federal Funds Sold'})
-
+# cash_equiv_table = balance_sheet_soup.find_all('div', attrs={'title':'Cash, Cash Equivalents & Federal Funds Sold'})
+cash_equiv_table = balance_sheet_soup.find_all('div', class_='D(ib) Va(m) Ell Mt(-3px) W(185px)--mv2 W(170px) undefined')
 
 balance_sheet_table = balance_sheet_soup.find('div', class_='D(tbrg)')
 
