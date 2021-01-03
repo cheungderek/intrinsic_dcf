@@ -53,12 +53,12 @@ import pandas_datareader as dr
 import datetime
 import lxml
 from lxml import html
-from columnar import columnar
+#from columnar import columnar
 import openpyxl
 
 '''---------- // Hard-coded variables below // ----------'''
-#company_ticker = '0700.HK'
 company_ticker = 'MSFT'
+#company_ticker = '9988.HK'
 timespan = 100 #timespan for the equity beta calculation
 market_risk_premium = 0.0523        # required return rate
 long_term_growth = 0.01             # perpetual rate of return. Should be less than 2.5%
@@ -66,18 +66,28 @@ debt_return = 0.01
 tax_rate = 0.3
 '''---------- // Hard-coded variables above // ----------'''
 
+def write_float_num(float_num, msg):
+    tmp = ("{:.2f}".format(float_num * 100))
+    f.write(msg + str(tmp) + '% \n')
+
 '''----- // I. Financial Information from Yahoo Finance // -----'''
 # Derek - try to get the following rows from the company's Income Statement
 # row 0 - Income Statement's header such as years
 # row 1 - Total Revenue
-# row 2 - EBIT or (pre-tax income + interface paid)
+# row 2 - EBIT or (pre-tax income + interest paid)
+
+filename = company_ticker + "_results.csv"
+f = open(filename, "w")
+f.write('All numbers in Billions \n')
+
 income_statement_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/financials?p=' + company_ticker
 income_statement_html = requests.get(income_statement_url)
 income_statement_soup = bs(income_statement_html.text, 'html.parser')
 
-# find the income statement header such as "Breakdown TTM 9/30/2020 9/30/2019 ..."
+# build the Income Statement header and reverse the years"
 income_statement_table = income_statement_soup.find('div', class_='M(0) Whs(n) BdEnd Bdc($seperatorColor) D(itb)')
 income_statement_header = income_statement_table.find('div', class_='D(tbr) C($primaryColor)')
+# Income Statement Header such as "Breakdown   x/x/2017   x/x/2018   x/x/2019   x/x/2020   TTM"
 header_lst = []
 for i in income_statement_header.find_all('div'):
     if len(i) != 0:
@@ -87,15 +97,19 @@ del header_lst[len(header_lst)-1]
 header_lst.insert(0,'Breakdown')
 income_statement_df = pd.DataFrame(columns = header_lst)
 
+# print the income statement header containing Breakdown x/x/x  x/x/x"
+f.write(str(header_lst) + '\n')
+
 # Derek - 2 Dec 2020 - write to a spreadsheet
-spreadsheet = company_ticker + '.xlsx'
-writer = pd.ExcelWriter(spreadsheet)
-income_statement_df.to_excel(writer, 'Income Statement')
+#spreadsheet = company_ticker + '.xlsx'
+#writer = pd.ExcelWriter(spreadsheet)
+#income_statement_df.to_excel(writer, 'Income Statement')
+
 #table = columnar(header_lst, 'test header', no_borders=True)
 #print(table)
 #for row in header_lst:
 #        print("[: >20] [: >20] [: >20] [: >20]".format(*row))
-print('header_lst = Date\n', header_lst)
+#print('header_lst = Date\n', header_lst)
 #income_statement_df.to_excel(writer, list(header_lst))
 
 
@@ -108,8 +122,9 @@ for i in revenue_row.find_all('div', attrs={'data-test':'fin-col'}):
 revenue_lst = revenue_lst[::-1]
 revenue_lst.insert(0,'Total Revenue')
 income_statement_df.loc[0] = revenue_lst
-# Derek
-print('Revenue - revenue_lst\n', revenue_lst)
+
+# print all Revenue columns in the Income Statement
+f.write(str(revenue_lst) + '\n')
 #income_statement_df.to_excel(writer, revenue_lst)
 
 try:
@@ -131,7 +146,10 @@ EBIT_lst.insert(0,'EBIT')
 income_statement_df.loc[1] = EBIT_lst
 # Derek - EBIT = Income Before Tax + Interest Expense
 #income_statement_df.to_excel(writer, EBIT_lst)
-print('EBIT - EBIT_lst\n', EBIT_lst)
+#print('EBIT - EBIT_lst\n', EBIT_lst)
+# print all EBIT in the Income Statement
+f.write(str(EBIT_lst) + '\n')
+
 
 # Derek - remove the TTM column in both Total Revenue and EBIT
 # May be include TTM so that there are more data points to calculate forecasted EBIT or FCF
@@ -139,64 +157,79 @@ income_statement_df = income_statement_df.drop('ttm', axis=1)
 
 
 '''---------- // II. Forecasting Revenues and EBIT // ----------'''
+# calculate average CAGR for Revenues for the past few years in order to use it for forecasting future revenues
 latest_rev = income_statement_df.iloc[0,len(income_statement_df.columns)-1]
 earliest_rev = income_statement_df.iloc[0,1]
 # Derek - CAGR - Compound Annual Growth Rate
 rev_CAGR = (latest_rev/earliest_rev)**(float(1/(len(income_statement_df.columns)-2)))-1
-print('Revenue Compound Annual Growth Rate (CAGR)\n', rev_CAGR)
+f.write('Revenue Compound Annual Growth Rate (CAGR) = ' + str("{:.2f}".format(rev_CAGR * 100)) + '% \n')
 
 
 EBIT_margin_lst = []
 for year in range(1,len(income_statement_df.columns)):
+    # EBIT / Revenue
     EBIT_margin = income_statement_df.iloc[1,year]/income_statement_df.iloc[0,year]
     EBIT_margin_lst.append(EBIT_margin)
 avg_EBIT_margin = sum(EBIT_margin_lst)/len(EBIT_margin_lst)
-print('Average EBIT Margin - avg_EBIT_margin \n', avg_EBIT_margin)
+
+f.write('Average EBIT Margin = ' + str("{:.2f}".format(avg_EBIT_margin * 100)) + '% \n')
+#write_float_num(avg_EBIT_margin, '\n Average EBIT Margin - avg_EBIT_margin = ')
+
+#format_avg_EBIT_margin = ("{:.2f}".format(avg_EBIT_margin)) * 100
+#f.write('\n Average EBIT Margin - avg_EBIT_margin = ')
+#f.write(str(format_avg_EBIT_margin))
+#f.write('% \n')
 
 forecast_df = pd.DataFrame(columns=['Year ' + str(i) for i in range(1,7)])
+f.write(str(forecast_df.columns) + '\n')
 
 rev_forecast_lst = []
+f.write('Forecasted Revenue using CAGR = rev_forecast = ')
 for i in range(1,7):
     if i != 6:
         rev_forecast = latest_rev*(1+rev_CAGR)**i
     else:
         rev_forecast = latest_rev*(1+rev_CAGR)**(i-1)*(1+long_term_growth)
     rev_forecast_lst.append(int(rev_forecast))
+    f.write(str(int(rev_forecast)) + ',')
 forecast_df.loc[0] = rev_forecast_lst
-print('Revenue Forecast using CAGR - rev_forecast \n', rev_forecast)
+f.write('\n')
+
 
 EBIT_forecast_lst = []
+f.write('EDIT_forcast = Revenue forecast * avg_EBIT_margin = ')
 for i in range(0,6):
     EBIT_forecast = rev_forecast_lst[i]*avg_EBIT_margin
     EBIT_forecast_lst.append(int(EBIT_forecast))
+    f.write(str(int(EBIT_forecast)) + ',')
 forecast_df.loc[1] = EBIT_forecast_lst
-print('EBIT Forecast using average EBIT Margin - EBIT_forecast \n', EBIT_forecast)
+
 
 
 '''---------- // III. Calculating the WACC // ----------'''
-# Derek - Weighted Average Cost of Capital. Using Debt and Equity Cost to calculate the WACC of a company
+# Derek - Weighted Average Cost of Capital. Using Debt and Equity Cost to calculate the rate of discount used
+#         for future cash flows discounted to the present value for intrinsic value calculation
 current_date = datetime.date.today()
-past_date = current_date-datetime.timedelta(days=timespan)
-print('current_date ', current_date, 'past_date ', past_date, '\n')
+past_date = current_date - datetime.timedelta(days=timespan)
+f.write('\n current_date ' + str(current_date) + ' past_date ' + str(past_date))
 
-
-# Derek - ^TNX = 10 year Mortgage Rates
+# Derek - use ^TNX = 10 year Mortgage Rates for the past 100 days to calculate the Risk Free Rate for calculating
+#       the WACC for discounting future FCFs to Present Value
 risk_free_rate_df = dr.DataReader('^TNX', 'yahoo', past_date, current_date)
-print('risk free 10 year Mortgage Rate\n', risk_free_rate_df)
-
 risk_free_rate_float = (risk_free_rate_df.iloc[len(risk_free_rate_df)-1,5])/100
+f.write('Risk Free rate = ' + str("{:.2f}".format(risk_free_rate_float * 100)) + '% \n')
 
 price_information_df = pd.DataFrame(columns=['Stock Prices', 'Market Prices'])
 
 stock_price_df = dr.DataReader(company_ticker, 'yahoo', past_date, current_date)
 price_information_df['Stock Prices'] = stock_price_df['Adj Close']
 
-# Derek - ^GSPC = S&P 500
+# Derek - use ^GSPC = S&P 500 to calculate the expected stock rate of return for calculating the WACC for discounting
+#       future FCFs to Present value
 market_price_df = dr.DataReader('^GSPC', 'yahoo', past_date, current_date)
 price_information_df['Market Prices'] = market_price_df['Adj Close']
 
 returns_information_df = pd.DataFrame(columns =['Stock Returns', 'Market Returns'])
-
 
 stock_return_lst = []
 for i in range(1,len(price_information_df)):
@@ -206,10 +239,12 @@ for i in range(1,len(price_information_df)):
     stock_return_lst.append(stock_return)
 returns_information_df['Stock Returns'] = stock_return_lst
 
+f.write(' Stock return = ' + str(stock_return_lst) + '% \n')
 
 # Derek - 2 Dec 2020 - write to spreadsheet
-returns_information_df.to_excel(writer, 'Stock Returns')
-writer.save()
+#returns_information_df.to_excel(writer, 'Stock Returns')
+#writer.save()
+
 
 market_return_lst = []
 for i in range(1,len(price_information_df)):
@@ -219,6 +254,8 @@ for i in range(1,len(price_information_df)):
     market_return_lst.append(market_return)
 returns_information_df['Market Returns'] = market_return_lst
 
+f.write(' Market return = ' + str(market_return_lst) + '% \n')
+
 covariance_df = returns_information_df.cov()
 covariance_float = covariance_df.iloc[1,0]
 variance_df = returns_information_df.var()
@@ -227,17 +264,21 @@ market_variance_float = variance_df.iloc[1]
 equity_beta = covariance_float/market_variance_float
 equity_return = risk_free_rate_float+equity_beta*(market_risk_premium)
 
-balance_sheet_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/balance-sheet?p=' + company_ticker
+f.write('Equity Beta = ' + str("{:.2f}".format(equity_beta)) + '\n')
+f.write('Equity Return = ' + str("{:.2f}".format(equity_return * 100)) + '% \n')
 
+balance_sheet_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/balance-sheet?p=' + company_ticker
 balance_sheet_html = requests.get(balance_sheet_url)
-#balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
+balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
+# balance_sheet_soup = bs(balance_sheet_html.content, 'html.parser')
 # use html5lib parser because Cash and Cash Equivants are under "button" and cannot be scrapped by html.parser
 # pip install html5lib
-balance_sheet_soup = bs(balance_sheet_html.text, 'html5lib')
+#balance_sheet_soup = bs(balance_sheet_html.text, 'html5lib')
 
-balance_sheet_table = balance_sheet_soup.find('div', class_='D(tbrg)')
+balance_sheet_table = balance_sheet_soup.find('div', class_='M(0) Whs(n) BdEnd Bdc($seperatorColor) D(itb)')
 
-# Derek - net debt
+# Derek - Net Debt
+# Not all companies' balance sheets have Net Debt. Therefore, we need to try a few ways to calculate the Net Debt
 net_debt_lst = []
 try:
     net_debt_row = balance_sheet_table.find('div', attrs={'title':'Net Debt'}).parent.parent
@@ -249,9 +290,9 @@ try:
 except Exception as err:
     # Derek - try to catch balance sheet that does not contain Net Debt
     # net debt = total debt - cash-like assets on the balance sheet
-    tree = html.fromstring(balance_sheet_html.content)
-    tree.xpath("//h1/text()")
-    print(tree.xpath("//h1/text()"))
+#    tree = html.fromstring(balance_sheet_html.content)
+#    tree.xpath("//h1/text()")
+#    print(tree.xpath("//h1/text()"))
 
     total_debt_lst = []
     cash_equiv_lst = []
@@ -262,10 +303,26 @@ except Exception as err:
         total_debt_lst.append(total_debt_value)
      # find the cash and cash equivalents
 #    cash_equiv_row = balance_sheet_table.find_all('div', {"class":"DP(0) M(0) Va(m) Bd(0) Fz(s) Mend(2px) tgglBtn"}).parent.parent.parent
-    data = []
-    r = requests.get(balance_sheet_url)
-    soup = bs(r.text, 'html_parser')
+#    cash_equiv_row = balance_sheet_soup.find('div', attrs={'title':'Cash And Cash Equivalents'}).parent.parent
+    cash_equiv_row = balance_sheet_soup.find('span', {'class':'Ta(c) Py(6px) Bxz(bb) BdB Bdc($seperatorColor) Miw(120px) Miw(140px)--pnclg D(tbc'})
 
+    for cash_equiv_value in cash_equiv_row.find_all('div', attrs={'data-test':'fin-col'}):
+        cash_equiv_value = cash_equiv_value.text
+        cash_equiv_value = cash_equiv_value.replace(',', '')
+        cash_equiv_lst.append(int(cash_equiv_value))
+        cash_equiv_lst = cash_equiv_lst[::-1]
+        cash_equiv_lst.insert(0, 'Total Cash Equiv')
+
+    for value in total_debt_row.find_all('div'):
+        net_debt_lst.append(value - cash_equiv_value)
+
+#    income_statement_df.loc[0] = revenue_lst
+
+
+#    data = []
+#    r = requests.get(balance_sheet_url)
+#    soup = bs(r.text, 'html_parser')
+'''
     table = soup.find_all('table')  # finds all tables
     table_top = pd.read_html(str(table))[0]  # the top table
     try:  # try to get the other table if exists
@@ -274,14 +331,8 @@ except Exception as err:
         table_extra = pd.DataFrame()
     result = pd.concat([table_top, table_extra])
     data.append(result)
+'''
 
-    cash_equiv_row = balance_sheet_table.find('div', attrs={'title':'Cash And Cash Equivalents'}).parent.parent
-    for cash_equiv_value in cash_equiv_row.find_all('div'):
-        cash_equiv_value = cash_equiv_value.text
-        cash_equiv_value = cash_equiv_value.replace(',', '')
-        cash_equiv_lst.append(cash_equiv_value)
-    for value in total_debt_row.find_all('div'):
-        net_debt_lst.append(value - cash_equiv_value)
 '''
     table_rows = tree.xpath("//div[contains(@class, 'D(tbr)')]")
     assert len(table_rows) > 0
@@ -360,4 +411,9 @@ enterprise_value = sum(discounted_EBIT_lst)+PV_terminal_value
 equity_value = enterprise_value-net_debt_int
 intrinsic_value = equity_value / shared_issued_int
 print('\n\n\nIntrinsic value of each share of', company_ticker, 'on', current_date, '=', "{0:0.1f}".format(intrinsic_value), '\n\n\n')
+
+f.close()
+
+
+
 
