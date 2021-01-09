@@ -1,4 +1,5 @@
 # Derek - 11 Dec 2020
+# 8 Jan 2020
 # https://medium.com/analytics-vidhya/building-an-intrinsic-value-calculator-with-python-7986833962cd
 # http://theautomatic.net/yahoo_fin-documentation/
 # https://www.mattbutton.com/2019/01/24/how-to-scrape-yahoo-finance-and-extract-fundamental-stock-market-data-using-python-lxml-and-pandas/?fbclid=IwAR3971b38GYY7ERRLHB388ywzsGlEtd4heXj0191yJDgwdlHQFaKqwF99vI
@@ -8,12 +9,11 @@
 ''' 
 Overview
 ========
-Find the net present value (PV) of a company by using its forecasted Free Cash Flow (FCF) for the next few years and 
-its perpetual value (discounted to present) assuming the company will be sold at after the forecasted FCF years. 
+Find the net present value (PV) of a company by using forecasted Free Cash Flow (FCF) and its perpetual value.  
 This is the net PV of the company and the intrinsic value of each share of the company can be found by dividing the PV 
 of the company with the number of shares outstanding
 
-FCF = EBIT - capital expenditure. The program assumes matured companies have less captial expenditure and thus FCF = EBIT.
+FCF = EBIT - capital expenditure. The program assumes matured companies have less capital expenditure and thus FCF = EBIT.
 
 To calculate future FCFs or EBITs, we will assume that the average revenue growth rate and the average EBIT margin of 
 the company in the past three years will continue to apply for the next five years. Therefore, for a given future 
@@ -30,7 +30,7 @@ Procedures
     - get the EBIT (e.g., Income Before Tax and Interest Expense) for each column
     - get the CAGR or Compound Annual Growth Rate. latest_rev/earliest_rev for each column
     
-2) Forecasting Revenues and EBIT
+2) Forecasting Revenues and EBIT and use it to find the forecasted Free Cash Flow in the future
     - calculate the avg_EBIT_margin by adding all available EBIT / # columns. This is used to calculate the future
       FCF for a given future Revenue growth assuming the avg_EBIT_margin from the past few years maintains the same
     - calculate future forecast revenue, rev_forcast using CAGR. For example, to calculate the 2nd rev_forcast, 
@@ -38,12 +38,26 @@ Procedures
     - calculate EBIT_forecast or future FCF = rev_forecast_lst[i]*avg_EBIT_margin
     
 3) Calculate Weighted Average Cost of Capital (average cost of capital of the firm with debt and equity financing
+   and uses it as the discount rate to calculate PV of all future FCFs
+   
    WACC = market_cap_int/company_value * equity_return + net_debt_int/company_value * debt_return * (1-tax_rate)
    
    WACC is the risk-adjusted discount rate. For example, a high-risk company will have a higher WACC because investors
    will demand higher interest rate of the company bond and equity financing????
+'''
 
-
+''' ---------- // ENHANCEMENT // ---------- 
+This program is based on https://medium.com/analytics-vidhya/building-an-intrinsic-value-calculator-with-python-7986833962cd
+with the following enhancements:
+1)  include the net debt (short term cash - (short and long term debt) against the calculated Intrinsic Value of 
+    the company. Otherwise, companies like Ford Motor (F) with over 120 billions debt could have a very high calculated 
+    intrinsic value of USD 70 a share in early 2020 when it was only trading at 12% of its intrinsic value 
+2)  For companies such as TD, TD.TO and 0700.HK in Yahoo Finance where Net Debt are not shown in the financial 
+    statements, the original program will bomb. The folloiwng equation is used under this situation:
+        XXXXXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+3)  Create a spreadsheet file with all Internet scraped, assumed and calculated values for the stock under analysis 
+    for final sanity check
+4)  incorporate Phil Town's 4 Rules to further evaluate the investement criteria of the stock such as quick ratio etc...
 '''
 
 from bs4 import BeautifulSoup as bs
@@ -57,13 +71,13 @@ from lxml import html
 import openpyxl
 
 '''---------- // Hard-coded variables below // ----------'''
-company_ticker = 'MSFT'
+company_ticker = 'GM'
 #company_ticker = '9988.HK'
-timespan = 100 #timespan for the equity beta calculation
-market_risk_premium = 0.0523        # required return rate
-long_term_growth = 0.01             # perpetual rate of return. Should be less than 2.5%
+timespan = 100                      # timespan for the equity beta calculation
+market_risk_premium = 0.0525        # required return rate
+long_term_growth = 0.01             # perpetual 1% rate of return. Should be less than 2.5%
 debt_return = 0.01
-tax_rate = 0.3
+tax_rate = 0.3                      # 30% tax rate
 '''---------- // Hard-coded variables above // ----------'''
 
 def write_float_num(float_num, msg):
@@ -76,9 +90,10 @@ def write_float_num(float_num, msg):
 # row 1 - Total Revenue
 # row 2 - EBIT or (pre-tax income + interest paid)
 
-filename = company_ticker + "_results.csv"
+filename = company_ticker + "_intrinsc_value.csv"
 f = open(filename, "w")
-f.write('All numbers in Billions \n')
+f.write(company_ticker + '- Intrinsic Value Calculation \n')
+
 
 income_statement_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/financials?p=' + company_ticker
 income_statement_html = requests.get(income_statement_url)
@@ -97,21 +112,8 @@ del header_lst[len(header_lst)-1]
 header_lst.insert(0,'Breakdown')
 income_statement_df = pd.DataFrame(columns = header_lst)
 
-# print the income statement header containing Breakdown x/x/x  x/x/x"
 f.write(str(header_lst) + '\n')
-
-# Derek - 2 Dec 2020 - write to a spreadsheet
-#spreadsheet = company_ticker + '.xlsx'
-#writer = pd.ExcelWriter(spreadsheet)
-#income_statement_df.to_excel(writer, 'Income Statement')
-
-#table = columnar(header_lst, 'test header', no_borders=True)
-#print(table)
-#for row in header_lst:
-#        print("[: >20] [: >20] [: >20] [: >20]".format(*row))
-#print('header_lst = Date\n', header_lst)
-#income_statement_df.to_excel(writer, list(header_lst))
-
+#print(header_lst)
 
 revenue_row = income_statement_table.find('div', class_='D(tbr) fi-row Bgc($hoverBgColor):h')
 revenue_lst = []
@@ -120,11 +122,12 @@ for i in revenue_row.find_all('div', attrs={'data-test':'fin-col'}):
     i = i.replace(",","")
     revenue_lst.append(int(i))
 revenue_lst = revenue_lst[::-1]
+f.write('Past Revenue (B), ' + str(['{:.1f}'.format(float(x) / 10 ** 6) for x in revenue_lst]) + '\n')
+#print('Past Revenue (B) = ', str(['{:.1f}'.format(float(x) / 10 ** 6) for x in revenue_lst]), '\n')
 revenue_lst.insert(0,'Total Revenue')
 income_statement_df.loc[0] = revenue_lst
 
-# print all Revenue columns in the Income Statement
-f.write(str(revenue_lst) + '\n')
+
 #income_statement_df.to_excel(writer, revenue_lst)
 
 try:
@@ -142,13 +145,9 @@ for i in EBIT_row.find_all('div', attrs={'data-test':'fin-col'}):
     i = i.replace(",","")
     EBIT_lst.append(int(i))
 EBIT_lst = EBIT_lst[::-1]
+f.write('Past EBIT (B), ' + str(['{:.1f}'.format(float(x) / 10 ** 6) for x in EBIT_lst]) + '\n')
 EBIT_lst.insert(0,'EBIT')
 income_statement_df.loc[1] = EBIT_lst
-# Derek - EBIT = Income Before Tax + Interest Expense
-#income_statement_df.to_excel(writer, EBIT_lst)
-#print('EBIT - EBIT_lst\n', EBIT_lst)
-# print all EBIT in the Income Statement
-f.write(str(EBIT_lst) + '\n')
 
 
 # Derek - remove the TTM column in both Total Revenue and EBIT
@@ -162,7 +161,8 @@ latest_rev = income_statement_df.iloc[0,len(income_statement_df.columns)-1]
 earliest_rev = income_statement_df.iloc[0,1]
 # Derek - CAGR - Compound Annual Growth Rate
 rev_CAGR = (latest_rev/earliest_rev)**(float(1/(len(income_statement_df.columns)-2)))-1
-f.write('Revenue Compound Annual Growth Rate (CAGR) = ' + str("{:.2f}".format(rev_CAGR * 100)) + '% \n')
+f.write('Revenue Compound Annual Growth Rate (CAGR) ,' + str("{:.1f}".format(rev_CAGR * 100)) + '% \n')
+print('\n\nRevenue CAGR =', "{:.1f}".format(rev_CAGR * 100), '%')
 
 
 EBIT_margin_lst = []
@@ -172,52 +172,51 @@ for year in range(1,len(income_statement_df.columns)):
     EBIT_margin_lst.append(EBIT_margin)
 avg_EBIT_margin = sum(EBIT_margin_lst)/len(EBIT_margin_lst)
 
-f.write('Average EBIT Margin = ' + str("{:.2f}".format(avg_EBIT_margin * 100)) + '% \n')
-#write_float_num(avg_EBIT_margin, '\n Average EBIT Margin - avg_EBIT_margin = ')
-
-#format_avg_EBIT_margin = ("{:.2f}".format(avg_EBIT_margin)) * 100
-#f.write('\n Average EBIT Margin - avg_EBIT_margin = ')
-#f.write(str(format_avg_EBIT_margin))
-#f.write('% \n')
+f.write('Average EBIT Margin,' + str("{:.1f}".format(avg_EBIT_margin * 100)) + '% \n')
 
 forecast_df = pd.DataFrame(columns=['Year ' + str(i) for i in range(1,7)])
-f.write(str(forecast_df.columns) + '\n')
+f.write(',' + str(forecast_df.columns) + '\n')
 
 rev_forecast_lst = []
-f.write('Forecasted Revenue using CAGR = rev_forecast = ')
+f.write('Future CAGR Revenues (B) next 6 years,')
 for i in range(1,7):
     if i != 6:
         rev_forecast = latest_rev*(1+rev_CAGR)**i
     else:
         rev_forecast = latest_rev*(1+rev_CAGR)**(i-1)*(1+long_term_growth)
     rev_forecast_lst.append(int(rev_forecast))
-    f.write(str(int(rev_forecast)) + ',')
+    #f.write(str(int(rev_forecast) / 10 ** 6) + ',')
+f.write(str(['{:.1f}'.format(float(x) / 10 ** 6) for x in rev_forecast_lst]))
 forecast_df.loc[0] = rev_forecast_lst
 f.write('\n')
 
 
 EBIT_forecast_lst = []
-f.write('EDIT_forcast = Revenue forecast * avg_EBIT_margin = ')
+f.write('Future EBIT (B),')
 for i in range(0,6):
     EBIT_forecast = rev_forecast_lst[i]*avg_EBIT_margin
     EBIT_forecast_lst.append(int(EBIT_forecast))
-    f.write(str(int(EBIT_forecast)) + ',')
+    #f.write(str(int(EBIT_forecast)) + ',')
+f.write(str(['{:.1f}'.format(float(x) / 10 ** 6) for x in EBIT_forecast_lst]))
 forecast_df.loc[1] = EBIT_forecast_lst
 
 
 
 '''---------- // III. Calculating the WACC // ----------'''
-# Derek - Weighted Average Cost of Capital. Using Debt and Equity Cost to calculate the rate of discount used
-#         for future cash flows discounted to the present value for intrinsic value calculation
+# The Weighted Average Cost of Capital (WACC) is the cost of a firm to do business using debt and equity finance.
+# WACC is used as the discount rate to discount future cash flows to the present value. It is very important and
+# sensitivity in influencing the intrinsic value of the firm.
+# Sanity Check - If a more credit worthy companies like Microsoft (MSFT) has WACC 7%, less worthy companies like
+# Ford Moter (F) should have a higher WACC.
 current_date = datetime.date.today()
 past_date = current_date - datetime.timedelta(days=timespan)
-f.write('\n current_date ' + str(current_date) + ' past_date ' + str(past_date))
+f.write('\nLast 100 day average Risk Free Rate before ' + str(current_date))
 
 # Derek - use ^TNX = 10 year Mortgage Rates for the past 100 days to calculate the Risk Free Rate for calculating
 #       the WACC for discounting future FCFs to Present Value
 risk_free_rate_df = dr.DataReader('^TNX', 'yahoo', past_date, current_date)
 risk_free_rate_float = (risk_free_rate_df.iloc[len(risk_free_rate_df)-1,5])/100
-f.write('Risk Free rate = ' + str("{:.2f}".format(risk_free_rate_float * 100)) + '% \n')
+f.write(str("{:.2f}".format(risk_free_rate_float * 100)) + '% \n')
 
 price_information_df = pd.DataFrame(columns=['Stock Prices', 'Market Prices'])
 
@@ -239,11 +238,8 @@ for i in range(1,len(price_information_df)):
     stock_return_lst.append(stock_return)
 returns_information_df['Stock Returns'] = stock_return_lst
 
-f.write(' Stock return = ' + str(stock_return_lst) + '% \n')
-
-# Derek - 2 Dec 2020 - write to spreadsheet
-#returns_information_df.to_excel(writer, 'Stock Returns')
-#writer.save()
+# uncomment to show Stock Return for calculating WACC
+#f.write('Stock return ,' + str([('{:.2f}'.format(x * 100)) + '%' for x in stock_return_lst]) + '\n')
 
 
 market_return_lst = []
@@ -254,7 +250,9 @@ for i in range(1,len(price_information_df)):
     market_return_lst.append(market_return)
 returns_information_df['Market Returns'] = market_return_lst
 
-f.write(' Market return = ' + str(market_return_lst) + '% \n')
+# Derek - uncomment to show Market Return for calculating WACC
+#f.write('Market return ,' + str([('{:.2f}'.format(x * 100)) + '%' for x in market_return_lst]) + '\n')
+
 
 covariance_df = returns_information_df.cov()
 covariance_float = covariance_df.iloc[1,0]
@@ -264,16 +262,12 @@ market_variance_float = variance_df.iloc[1]
 equity_beta = covariance_float/market_variance_float
 equity_return = risk_free_rate_float+equity_beta*(market_risk_premium)
 
-f.write('Equity Beta = ' + str("{:.2f}".format(equity_beta)) + '\n')
-f.write('Equity Return = ' + str("{:.2f}".format(equity_return * 100)) + '% \n')
+f.write('Equity Beta ,' + str("{:.2f}".format(equity_beta)) + '\n')
+f.write('Equity Return ,' + str("{:.2f}".format(equity_return * 100)) + '% \n')
 
 balance_sheet_url = 'https://finance.yahoo.com/quote/' + company_ticker + '/balance-sheet?p=' + company_ticker
 balance_sheet_html = requests.get(balance_sheet_url)
 balance_sheet_soup = bs(balance_sheet_html.text, 'html.parser')
-# balance_sheet_soup = bs(balance_sheet_html.content, 'html.parser')
-# use html5lib parser because Cash and Cash Equivants are under "button" and cannot be scrapped by html.parser
-# pip install html5lib
-#balance_sheet_soup = bs(balance_sheet_html.text, 'html5lib')
 
 balance_sheet_table = balance_sheet_soup.find('div', class_='M(0) Whs(n) BdEnd Bdc($seperatorColor) D(itb)')
 
@@ -290,9 +284,6 @@ try:
 except Exception as err:
     # Derek - try to catch balance sheet that does not contain Net Debt
     # net debt = total debt - cash-like assets on the balance sheet
-#    tree = html.fromstring(balance_sheet_html.content)
-#    tree.xpath("//h1/text()")
-#    print(tree.xpath("//h1/text()"))
 
     total_debt_lst = []
     cash_equiv_lst = []
@@ -317,47 +308,6 @@ except Exception as err:
         net_debt_lst.append(value - cash_equiv_value)
 
 #    income_statement_df.loc[0] = revenue_lst
-
-
-#    data = []
-#    r = requests.get(balance_sheet_url)
-#    soup = bs(r.text, 'html_parser')
-'''
-    table = soup.find_all('table')  # finds all tables
-    table_top = pd.read_html(str(table))[0]  # the top table
-    try:  # try to get the other table if exists
-        table_extra = pd.read_html(str(table))[7]
-    except:
-        table_extra = pd.DataFrame()
-    result = pd.concat([table_top, table_extra])
-    data.append(result)
-'''
-
-'''
-    table_rows = tree.xpath("//div[contains(@class, 'D(tbr)')]")
-    assert len(table_rows) > 0
-    parsed_rows = []
-    for table_row in table_rows:
-        parsed_row = []
-        el = table_row.xpath("./div")
-        none_count = 0
-        for rs in el:
-            try:
-                (text,) = rs.xpath('.//span/text()[1]')
-                parsed_row.append(text)
-            except ValueError:
-                parsed_row.append(np.NaN)
-                none_count += 1
-        if (none_count < 4):
-            parsed_rows.append(parsed_row)
-    df1 = pd.DataFrame(parsed_rows)
-
-    cash_equiv_int = int(parsed_row[3])
-    net_debt_int = int(total_debt_lst[3]) - cash_equiv_int
-
-'''     
-
-
 
 
 # Derek - 2 Dec 2020 - Find the latest Share Issued in order to calculate the intrinsic value of each stock
@@ -389,10 +339,17 @@ if market_cap_str[len(market_cap_str)-1] == 'B':
     market_cap_lst[1] = market_cap_lst[1].replace('B',(6-market_cap_length)*'0')
     market_cap_int = int(''.join(market_cap_lst))
 
+# company value = the total money needed to buy an entire company, which means we buy all share issues + the
+# debt of the company. ???? So company likes FORD has 130 billion long-term debt make the company value
 company_value = market_cap_int + net_debt_int
 
 WACC = market_cap_int/company_value * equity_return + net_debt_int/company_value * debt_return * (1-tax_rate)
-print('WACC is: \n', WACC * 100, '%')
+# Derek - Manual override of WACC is the value does not make sense. For example, if Ford Motor WACC is lower than
+# Apply (e.g., WACC = 8%), you can manually override the calculated WACC by uncommenting next line where the example
+# show WACC = 12%
+#WACC = 0.12
+f.write('Weighted Average Capital Cost (WACC),' + str("{:.2f}".format(WACC * 100)) + '% \n')
+print('WACC = ', str("{:.1f}".format(WACC * 100)), '%')
 
 
 '''-------- // IV. Discounting the Forecasted EBIT // --------'''
@@ -403,14 +360,15 @@ for year in range(0,5):
     discounted_EBIT_lst.append(int(discounted_EBIT))
 
 terminal_value = forecast_df.iloc[1,5]/(WACC-long_term_growth)
-print('terminal value of all future EBIT', terminal_value)
+#print('terminal value of all future EBIT', terminal_value)
 PV_terminal_value = int(terminal_value/(1+WACC)**5)
-print('present value of terminal value of future EBIT', PV_terminal_value)
+#print('present value of terminal value of future EBIT', PV_terminal_value)
 
 enterprise_value = sum(discounted_EBIT_lst)+PV_terminal_value
-equity_value = enterprise_value-net_debt_int
+equity_value = enterprise_value - net_debt_int
 intrinsic_value = equity_value / shared_issued_int
-print('\n\n\nIntrinsic value of each share of', company_ticker, 'on', current_date, '=', "{0:0.1f}".format(intrinsic_value), '\n\n\n')
+f.write('Intrinsic value of each share of' + company_ticker + ',' + str("{:0.1f}".format(intrinsic_value)) + '\n')
+print('Intrinsic value of each share of', company_ticker, 'on', current_date, '=', "{0:0.1f}".format(intrinsic_value), '\n')
 
 f.close()
 
