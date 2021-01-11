@@ -4,6 +4,8 @@
 # http://theautomatic.net/yahoo_fin-documentation/
 # https://www.mattbutton.com/2019/01/24/how-to-scrape-yahoo-finance-and-extract-fundamental-stock-market-data-using-python-lxml-and-pandas/?fbclid=IwAR3971b38GYY7ERRLHB388ywzsGlEtd4heXj0191yJDgwdlHQFaKqwF99vI
 # https://algotrading101.com/learn/yfinance-guide/
+# https://codingandfun.com/calculating-cost-of-equity-with-python/
+# https://codingandfun.com/gordon-growth-model-valuing-a-company-with-python/
 
 ''' --- Steps --- '''
 ''' 
@@ -71,13 +73,13 @@ from lxml import html
 import openpyxl
 
 '''---------- // Hard-coded variables below // ----------'''
-company_ticker = 'GM'
+company_ticker = '0941.HK'
 #company_ticker = '9988.HK'
 timespan = 100                      # timespan for the equity beta calculation
 market_risk_premium = 0.0525        # required return rate
 long_term_growth = 0.01             # perpetual 1% rate of return. Should be less than 2.5%
 debt_return = 0.01
-tax_rate = 0.3                      # 30% tax rate
+tax_rate = 0.3                      # 30% tax rate. Use it to reduce the cost of debt and part of it is tax-dedubable
 '''---------- // Hard-coded variables above // ----------'''
 
 def write_float_num(float_num, msg):
@@ -204,32 +206,33 @@ forecast_df.loc[1] = EBIT_forecast_lst
 
 '''---------- // III. Calculating the WACC // ----------'''
 # The Weighted Average Cost of Capital (WACC) is the cost of a firm to do business using debt and equity finance.
+# WACC involves Cost of Equity, which is the rate of return an investor requires from a stock before exploring other
+# opportunities. It comprises cost of debt and cost of equity. Cost of Debt is tax deduction. Cost of equity is the
+# dividend offers to investors to keep them investing into the company
 # WACC is used as the discount rate to discount future cash flows to the present value. It is very important and
 # sensitivity in influencing the intrinsic value of the firm.
-# Sanity Check - If a more credit worthy companies like Microsoft (MSFT) has WACC 7%, less worthy companies like
-# Ford Moter (F) should have a higher WACC.
 current_date = datetime.date.today()
 past_date = current_date - datetime.timedelta(days=timespan)
-f.write('\nLast 100 day average Risk Free Rate before ' + str(current_date))
 
 # Derek - use ^TNX = 10 year Mortgage Rates for the past 100 days to calculate the Risk Free Rate for calculating
 #       the WACC for discounting future FCFs to Present Value
 risk_free_rate_df = dr.DataReader('^TNX', 'yahoo', past_date, current_date)
 risk_free_rate_float = (risk_free_rate_df.iloc[len(risk_free_rate_df)-1,5])/100
-f.write(str("{:.2f}".format(risk_free_rate_float * 100)) + '% \n')
+f.write('\nLast 100 day average Risk Free Rate before ' + str(current_date) + str("{:.2f}".format(risk_free_rate_float * 100)) + '% \n')
 
 price_information_df = pd.DataFrame(columns=['Stock Prices', 'Market Prices'])
 
 stock_price_df = dr.DataReader(company_ticker, 'yahoo', past_date, current_date)
 price_information_df['Stock Prices'] = stock_price_df['Adj Close']
 
-# Derek - use ^GSPC = S&P 500 to calculate the expected stock rate of return for calculating the WACC for discounting
-#       future FCFs to Present value
+# Derek - use ^GSPC = S&P 500 to calculate the Market Return
+#         use past 100 days Stock Price and the Market (S&P 500) Price to build the price_information_df
 market_price_df = dr.DataReader('^GSPC', 'yahoo', past_date, current_date)
 price_information_df['Market Prices'] = market_price_df['Adj Close']
 
 returns_information_df = pd.DataFrame(columns =['Stock Returns', 'Market Returns'])
 
+# find the daily different of the stock price for the past 100 days to find the STOCK return
 stock_return_lst = []
 for i in range(1,len(price_information_df)):
     open_price = price_information_df.iloc[i-1,0]
@@ -241,7 +244,7 @@ returns_information_df['Stock Returns'] = stock_return_lst
 # uncomment to show Stock Return for calculating WACC
 #f.write('Stock return ,' + str([('{:.2f}'.format(x * 100)) + '%' for x in stock_return_lst]) + '\n')
 
-
+# find the daily different of the S&P 500 for the past 100 days to find the MARKET return
 market_return_lst = []
 for i in range(1,len(price_information_df)):
     open_price = price_information_df.iloc[i-1,1]
@@ -280,11 +283,17 @@ try:
         value = value.text
         value = value.replace(',', '')
         net_debt_lst.append(value)
-    net_debt_int = int(net_debt_lst[3])
+        # for TD, the latest net_debt at [3] is '-' and thus case the try: fail. Need to try out the next net debt for non '-'
+    for i in range(3, len(net_debt_lst)):
+        if net_debt_lst[i] != '-':
+            net_debt_int = int(net_debt_lst[i])
+            break
+    if net_debt_lst[i] == '-':
+        print('\nCannot find Net Debt. Program Terminate\n')
 except Exception as err:
     # Derek - try to catch balance sheet that does not contain Net Debt
     # net debt = total debt - cash-like assets on the balance sheet
-
+    # todo - not yet working. Cannot get Cash and Cash Equivalent from the balance sheet table or soap
     total_debt_lst = []
     cash_equiv_lst = []
     total_debt_row = balance_sheet_table.find('div', attrs={'title':'Total Debt'}).parent.parent
@@ -343,11 +352,14 @@ if market_cap_str[len(market_cap_str)-1] == 'B':
 # debt of the company. ???? So company likes FORD has 130 billion long-term debt make the company value
 company_value = market_cap_int + net_debt_int
 
+# todo - use change in the stock and S&P 500 prices in the past 100 days to calculate WACC results in a very low
+# WACC (e.g., 2.5%) for companies where their stock prices did not change much in the last 100 day. This give very
+# high intrinsic value for this kind of companies
 WACC = market_cap_int/company_value * equity_return + net_debt_int/company_value * debt_return * (1-tax_rate)
 # Derek - Manual override of WACC is the value does not make sense. For example, if Ford Motor WACC is lower than
 # Apply (e.g., WACC = 8%), you can manually override the calculated WACC by uncommenting next line where the example
 # show WACC = 12%
-#WACC = 0.12
+# WACC = 0.12
 f.write('Weighted Average Capital Cost (WACC),' + str("{:.2f}".format(WACC * 100)) + '% \n')
 print('WACC = ', str("{:.1f}".format(WACC * 100)), '%')
 
@@ -365,7 +377,10 @@ PV_terminal_value = int(terminal_value/(1+WACC)**5)
 #print('present value of terminal value of future EBIT', PV_terminal_value)
 
 enterprise_value = sum(discounted_EBIT_lst)+PV_terminal_value
-equity_value = enterprise_value - net_debt_int
+# Derek - we should consider intrinsic value - net debt
+#equity_value = enterprise_value - (net_debt_int * 1)
+equity_value = enterprise_value - (net_debt_int * 2)
+
 intrinsic_value = equity_value / shared_issued_int
 f.write('Intrinsic value of each share of' + company_ticker + ',' + str("{:0.1f}".format(intrinsic_value)) + '\n')
 print('Intrinsic value of each share of', company_ticker, 'on', current_date, '=', "{0:0.1f}".format(intrinsic_value), '\n')
